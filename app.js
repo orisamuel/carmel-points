@@ -68,6 +68,35 @@ function starBar(n) {
   return `<div class="bar" role="progressbar" aria-valuemin="0" aria-valuemax="20" aria-valuenow="${rem}" aria-label="התקדמות לכוכב הבא"><i style="width:${(rem / 20) * 100}%"></i></div>
     <p class="sub">עוד ${need === 1 ? 'נקודה אחת' : need + ' נקודות'} לכוכב הבא ⭐</p>`;
 }
+// Amounts are always said in the ladder's own things (2 מגדנות), never as a big number of points.
+// The amount picker: how many + which thing. Stored as points underneath.
+const PICK = [...UNITS].reverse();                                   // נקודה, כוכב, מגדנה, ...
+function splitAmount(n) {
+  n = Math.max(0, Math.floor(Number(n) || 0));
+  for (const u of UNITS) if (n && n % u.size === 0) return { qty: n / u.size, size: u.size };
+  return { qty: n, size: 1 };
+}
+function pickerHTML(points, fields) {
+  const { qty, size } = points ? splitAmount(points) : { qty: '', size: 20 };   // empty: starts on כוכבים
+  const q = fields ? draftVal(fields.qty, qty || '') : (qty || '');
+  const s = int(fields ? draftVal(fields.unit, size) : size) || 20;
+  const fq = fields ? ` data-field="${fields.qty}"` : '', fu = fields ? ` data-field="${fields.unit}"` : '';
+  return `<div class="amount">
+    <input class="in num" type="number" inputmode="numeric" min="1" value="${esc(q)}" data-amt-qty${fq} aria-label="כמה">
+    <select class="in" data-amt-unit${fu} aria-label="מה">${PICK.map((u) => `<option value="${u.size}"${u.size === s ? ' selected' : ''}>${u.e} ${int(q) === 1 ? u.name : u.many}</option>`).join('')}</select>
+  </div>`;
+}
+const readAmount = (el) => { const q = int($('[data-amt-qty]', el).value), s = int($('[data-amt-unit]', el).value); return q > 0 && s > 0 ? q * s : 0; };
+// "1 כוכב", "3 כוכבים": the names in the list follow the number
+function relabelPicker(box) {
+  const one = int($('[data-amt-qty]', box).value) === 1;
+  $$('[data-amt-unit] option', box).forEach((o) => { const u = PICK.find((x) => x.size === int(o.value)); if (u) o.textContent = `${u.e} ${one ? u.name : u.many}`; });
+}
+const setAmount = (el, points) => { const { qty, size } = splitAmount(points); $('[data-amt-qty]', el).value = qty; $('[data-amt-unit]', el).value = String(size); relabelPicker($('.amount', el) || el); };
+function ladderHTML() {
+  const rows = [[20, 'נקודות', '✨', 'כוכב', '⭐'], [6, 'כוכבים', '⭐', 'מגדנה', '🍬'], [4, 'מגדנות', '🍬', "צ'ונגון", '🍡'], [3, "צ'ונגונים", '🍡', 'צל"ש', '🎖️'], [10, 'צל"שים', '🎖️', 'טונטון', '🐋']];
+  return `<div class="conv">${rows.map(([n, a, ea, b, eb]) => `<div class="conv-row"><span class="conv-from"><span class="e" aria-hidden="true">${ea}</span>${n} ${esc(a)}</span><span class="conv-eq" aria-hidden="true">=</span><span class="conv-to"><span class="e" aria-hidden="true">${eb}</span>${esc(b)}</span></div>`).join('')}</div>`;
+}
 
 // ============================================================ time
 const fmtWhen = (ms) => new Intl.DateTimeFormat('he-IL', { timeZone: TZ, weekday: 'long', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' }).format(ms);
@@ -260,10 +289,16 @@ const OVERLAY = {
     v.prizes.sort((a, b) => a.price - b.price);
   },
   setPhone(v, p) { v.phones[p.role] = p.norm || ''; },
+  saveRule(v, p) {
+    const x = v.rules.find((z) => z.id === p.id);
+    if (x) Object.assign(x, { emoji: p.emoji, text: p.text, points: p.points, active: p.active !== false });
+    else v.rules.push({ id: p.id, emoji: p.emoji, text: p.text, points: p.points, active: p.active !== false, _pending: true });
+  },
+  deleteRule(v, p) { v.rules = v.rules.filter((x) => x.id !== p.id); },
 };
 function view() {
   const v = JSON.parse(JSON.stringify(S.server || {}));
-  for (const k of ['prizes', 'requests', 'orders', 'ledger', 'words', 'moods', 'hardNotes']) v[k] = v[k] || [];
+  for (const k of ['prizes', 'rules', 'requests', 'orders', 'ledger', 'words', 'moods', 'hardNotes']) v[k] = v[k] || [];
   v.phones = v.phones || {}; v.codes = v.codes || {};
   v.balance = v.balance || 0; v.reserved = v.reserved || 0;
   for (const it of S.outbox) { const f = OVERLAY[it.action]; if (f) try { f(v, it.payload); } catch { /* ignore a stale write */ } }
@@ -398,11 +433,13 @@ const CARMEL_TABS = [
   { id: 'home', e: '🏠', label: 'בית' },
   { id: 'shop', e: '🎁', label: 'חנות' },
   { id: 'words', e: '💌', label: 'מילים', badge: (v) => v.words.filter((w) => !w.read).length },
+  { id: 'earn', e: '📖', label: 'איך צוברים' },
 ];
 const PARENT_TABS = [
   { id: 'now', e: '⭐', label: 'עכשיו', badge: (v) => v.requests.filter((r) => r.status === ST.pending).length + v.orders.filter((o) => o.status === ST.pending).length },
   { id: 'pwords', e: '💌', label: 'מילים' },
   { id: 'pshop', e: '🎁', label: 'חנות' },
+  { id: 'pearn', e: '📖', label: 'איך צוברים' },
   { id: 'settings', e: '⚙️', label: 'הגדרות' },
 ];
 function render() {
@@ -492,12 +529,12 @@ function homeView(v) {
   <header class="top">${av('carmel')}<div class="hi"><small>היי</small><b>כרמל</b></div><button type="button" class="icon-btn" data-act="menu" aria-label="עוד">⋯</button></header>
   ${countHTML(v)}
   <section class="card">
-    <div class="row between"><h2>יש לך</h2><span class="total num">${fmtNum(v.balance)} נקודות</span></div>
+    <h2>יש לך</h2>
     <div style="margin-top:10px">${coinsHTML(Math.max(0, v.balance), true)}</div>
     ${starBar(v.balance)}
     ${v.reserved > 0 ? `<p class="sub">מזה ${esc(amountText(v.reserved))} בצד, להזמנה שמחכה לאישור.</p>` : ''}
     ${nextPrizeHTML(v)}
-    <div class="row between" style="margin-top:12px"><button type="button" class="btn" data-act="ask">✋ לבקש נקודות</button><button type="button" class="link" data-act="ladder">איך זה עובד?</button></div>
+    <div class="btns" style="margin-top:12px"><button type="button" class="btn" data-act="ask">✋ לבקש נקודות</button><button type="button" class="btn ghost" data-act="tab" data-tab="earn">📖 איך צוברים</button></div>
   </section>
   <section class="card">
     <h2>איך את?</h2>
@@ -513,10 +550,11 @@ function myRequest(r) {
   return `<div class="item"><div class="t"><b>✋ ${esc(amountText(r.points))}</b>${r.reason ? `<p>"${esc(r.reason)}"</p>` : ''}${got}${note}<time>${ago(r.at)}</time>${sending(r)}</div>
     <div class="stack" style="justify-items:end">${tagFor(r.status)}${r.status === ST.pending && !r._pending ? `<button type="button" class="del" data-act="cancelRequest" data-id="${esc(r.id)}">ביטול</button>` : ''}</div></div>`;
 }
+// A line in the points history: the amount in the ladder's things, with + for given and − for a prize.
+const signedAmount = (x) => `<span class="pts ${x.points >= 0 ? 'plus' : 'minus'}"><span aria-hidden="true">${x.points >= 0 ? '+' : '−'}</span> ${topEmoji(Math.abs(x.points))} ${esc(amountText(Math.abs(x.points)))}</span>`;
 function ledgerItem(x) {
-  const plus = x.points >= 0;
   const what = x.type === 'פרס' ? esc(x.reason) : `${esc(x.who)}${x.reason ? ': ' + esc(x.reason) : ''}`;
-  return `<div class="item"><span class="pts ${plus ? 'plus' : 'minus'} num" dir="ltr">${plus ? '+' : '−'}${fmtNum(Math.abs(x.points))}</span><div class="t"><p>${what}</p><time>${ago(x.at)}</time>${sending(x)}</div></div>`;
+  return `<div class="item"><div class="t">${signedAmount(x)}<p>${what}</p><time>${ago(x.at)}</time>${sending(x)}</div></div>`;
 }
 function shopView(v) {
   const avail = v.balance - v.reserved;
@@ -537,7 +575,7 @@ function shopView(v) {
   return `
   <header class="top"><div class="hi"><small>החנות</small><b>מה בא לך?</b></div></header>
   <section class="card">
-    <div class="row between"><h2>פנוי לקנייה</h2><span class="total num">${fmtNum(Math.max(0, avail))} נקודות</span></div>
+    <h2>פנוי לקנייה</h2>
     <div style="margin-top:10px">${coinsHTML(Math.max(0, avail))}</div>
     ${v.reserved > 0 ? `<p class="sub">ועוד ${esc(amountText(v.reserved))} בצד, להזמנה שמחכה לאישור.</p>` : ''}
   </section>
@@ -570,7 +608,29 @@ function markRead(v) {
   ids.forEach((id) => S.fresh.add(id));
   send('readWords', { ids });
 }
-const CARMEL_VIEWS = { home: homeView, shop: shopView, words: wordsView };
+// "איך צוברים": how points are earned (the parents' list) and the conversion table. Same tab
+// for everyone; the parents also edit the list here.
+function earnView(v) {
+  const parent = isParent();
+  const rules = v.rules.filter((x) => parent || x.active);
+  const rule = (x) => `<div class="item${x.active ? '' : ' pending-dot'}"><span class="rule-e" aria-hidden="true">${esc(x.emoji)}</span>
+    <div class="t"><p>${esc(x.text)}</p>${x.points ? `<span class="price"><span class="e" aria-hidden="true">${topEmoji(x.points)}</span> ${esc(amountText(x.points))}</span>` : ''}${parent && !x.active ? '<span class="meta"> · מוסתר</span>' : ''}${sending(x)}</div>
+    ${parent ? `<button type="button" class="btn ghost sm" data-act="editRule" data-id="${esc(x.id)}">עריכה</button>` : ''}</div>`;
+  return `
+  <header class="top"><div class="hi"><small>${parent ? 'מה כרמל רואה' : 'כל מה שצריך לדעת'}</small><b>איך צוברים</b></div></header>
+  <section class="card">
+    <div class="row between"><h2>איך צוברים נקודות</h2>${parent ? '<button type="button" class="btn sm" data-act="editRule" data-id="">+ עוד דרך</button>' : ''}</div>
+    <p class="sub">את הנקודות נותנים אבא ואמא${parent ? '. כרמל יכולה לבקש' : ', ואפשר גם לבקש'}.</p>
+    ${rules.length ? `<div class="list">${rules.map(rule).join('')}</div>` : (parent ? '<p class="hint">כאן כותבים על מה מקבלים נקודות, וכמה. כרמל רואה את זה בלשונית "איך צוברים".</p>' : '')}
+    ${parent ? '' : '<div class="btns" style="margin-top:12px"><button type="button" class="btn" data-act="ask">✋ לבקש נקודות</button></div>'}
+  </section>
+  <section class="card">
+    <h2>טבלת ההמרה</h2>
+    ${ladderHTML()}
+    <p class="sub">בחנות קונים פרסים בכל אחד מהם.</p>
+  </section>`;
+}
+const CARMEL_VIEWS = { home: homeView, shop: shopView, words: wordsView, earn: earnView };
 
 // ---------------------------------------------------------------- parents
 function setupCard(v) {
@@ -594,14 +654,14 @@ function reqDecide(r) {
   return `<div class="decide">
     <div class="row between"><b>✋ כרמל מבקשת ${esc(amountText(r.points))}</b><time class="meta">${ago(r.at)}</time></div>
     ${r.reason ? `<p style="margin:0">"${esc(r.reason)}"</p>` : ''}
-    <div class="row"><label class="meta" for="ap-${esc(r.id)}">כמה לאשר</label><input id="ap-${esc(r.id)}" class="in num" type="number" inputmode="numeric" min="1" data-field="ap-${esc(r.id)}" value="${esc(draftVal('ap-' + r.id, r.points))}"><span class="meta">נקודות</span></div>
+    <div class="stack" style="gap:6px"><span class="meta">כמה לאשר</span>${pickerHTML(r.points, { qty: 'apq-' + r.id, unit: 'apu-' + r.id })}</div>
     <div class="btns"><button type="button" class="btn ok sm" data-act="approveReq" data-id="${esc(r.id)}">לאשר</button><button type="button" class="btn ghost sm" data-act="declineReq" data-id="${esc(r.id)}">לא הפעם</button></div>
   </div>`;
 }
 function orderDecide(o) {
   return `<div class="decide">
     <div class="row between"><b>🎁 כרמל רוצה: ${esc(o.name)}</b><time class="meta">${ago(o.at)}</time></div>
-    <p class="meta" style="margin:0">${esc(amountText(o.price))} (${fmtNum(o.price)} נקודות)</p>
+    <p class="meta" style="margin:0">${topEmoji(o.price)} ${esc(amountText(o.price))}</p>
     <div class="btns"><button type="button" class="btn ok sm" data-act="approveOrder" data-id="${esc(o.id)}">לאשר</button><button type="button" class="btn ghost sm" data-act="declineOrder" data-id="${esc(o.id)}">לא הפעם</button></div>
   </div>`;
 }
@@ -616,8 +676,8 @@ function nowView(v) {
   const reqs = v.requests.filter((r) => r.status === ST.pending);
   const ords = v.orders.filter((o) => o.status === ST.pending);
   const deliver = v.orders.filter((o) => o.status === ST.approved);
-  const g = int(draftVal('givePts', ''));
-  const chips = [5, 20, 120, 480].map((n) => `<button type="button" class="chip${g === n ? ' on' : ''}" data-act="pickGive" data-pts="${n}">${topEmoji(n)} ${n === 5 ? '5 נקודות' : esc(amountText(n))}</button>`).join('');
+  const g = int(draftVal('giveQty', 0)) * int(draftVal('giveUnit', 20));
+  const chips = [5, 20, 120, 480].map((n) => `<button type="button" class="chip${g === n ? ' on' : ''}" data-act="pickGive" data-pts="${n}">${topEmoji(n)} ${esc(amountText(n))}</button>`).join('');
   const led = v.ledger.slice(0, 12);
   const moods = v.moods.slice(0, 10);
   return `
@@ -626,15 +686,14 @@ function nowView(v) {
   <section class="card kid">
     <div class="row">${av('carmel')}<div class="grow"><b style="font-size:18px">כרמל</b><div class="meta">${lastDef ? `${esc(moodLabel(v, last.mood))} · ${ago(last.at)}` : 'עוד לא סימנה איך היא'}</div></div></div>
     ${hard ? `<div class="alert">${esc(lastDef.e)} כרמל סימנה "${esc(lastDef.t)}" ${ago(last.at)}.</div>` : ''}
-    <div><div class="row between"><span class="meta">יש לה</span><span class="total num">${fmtNum(v.balance)} נקודות</span></div><div style="margin-top:8px">${coinsHTML(Math.max(0, v.balance))}</div></div>
+    <div><span class="meta">יש לה</span><div style="margin-top:8px">${coinsHTML(Math.max(0, v.balance))}</div></div>
     ${homeLine(v)}
   </section>
   ${reqs.length || ords.length || deliver.length ? `<section class="card"><h2>מחכה לכם</h2><div class="stack">${reqs.map(reqDecide).join('')}${ords.map(orderDecide).join('')}${deliver.map(orderDeliver).join('')}</div></section>` : ''}
   <section class="card stack">
     <h2>לתת נקודות</h2>
     <div class="chips">${chips}</div>
-    <label class="f">כמה נקודות<input class="in num" type="number" inputmode="numeric" min="1" data-field="givePts" value="${esc(draftVal('givePts', ''))}" placeholder="20"></label>
-    ${g > 0 ? `<p class="hint">= ${esc(amountText(g))}</p>` : ''}
+    <div class="stack" style="gap:6px"><span class="f">כמה</span>${pickerHTML(0, { qty: 'giveQty', unit: 'giveUnit' })}</div>
     <label class="f">על מה? (כרמל תראה את זה)<input class="in" maxlength="200" data-field="giveWhy" value="${esc(draftVal('giveWhy', ''))}" placeholder="למשל: על האומץ"></label>
     <button type="button" class="btn block" data-act="give">לתת</button>
   </section>
@@ -642,9 +701,8 @@ function nowView(v) {
   ${moods.length ? `<section class="card"><h2>מצב רוח</h2><div class="list">${moods.map((m) => { const d = moodOf(v, m.mood); return `<div class="item"><span aria-hidden="true">${d ? esc(d.e) : ''}</span><div class="t"><p>${d ? esc(d.t) : ''}</p><time>${ago(m.at)}</time></div></div>`; }).join('')}</div></section>` : ''}`;
 }
 function parentLedgerItem(x) {
-  const plus = x.points >= 0;
   const what = x.type === 'פרס' ? esc(x.reason) : `${esc(x.who)}${x.type === 'בקשה' ? ' (בקשה)' : ''}${x.reason ? ': ' + esc(x.reason) : ''}`;
-  return `<div class="item"><span class="pts ${plus ? 'plus' : 'minus'} num" dir="ltr">${plus ? '+' : '−'}${fmtNum(Math.abs(x.points))}</span><div class="t"><p>${what}</p><time>${ago(x.at)}</time>${sending(x)}</div>
+  return `<div class="item"><div class="t">${signedAmount(x)}<p>${what}</p><time>${ago(x.at)}</time>${sending(x)}</div>
     ${x.type === 'מתנה' && !x._pending ? `<button type="button" class="del" data-act="delGrant" data-id="${esc(x.id)}">מחיקה</button>` : ''}</div>`;
 }
 function pwordsView(v) {
@@ -668,7 +726,7 @@ function pshopView(v) {
     const label = o.status === ST.delivered ? '🎉 קיבלה' : o.status === ST.approved ? '✓ אושרה' : o.status === ST.pending ? '⏳ מחכה' : o.status;
     return `<div class="item"><div class="t stack" style="gap:6px"><div class="row between"><b>${esc(o.name)}</b><span class="tag">${esc(label)}</span></div><span class="meta">${esc(amountText(o.price))} · ${ago(o.at)}${o.by ? ' · ' + esc(o.by) : ''}</span>${act}</div></div>`;
   };
-  const prizeRow = (p) => `<div class="item${p.active ? '' : ' pending-dot'}"><span style="font-size:26px" aria-hidden="true">${esc(p.emoji)}</span><div class="t"><b>${esc(p.name)}</b><p class="meta">${esc(amountText(p.price))} · ${fmtNum(p.price)} נקודות${p.active ? '' : ' · מוסתר'}${sending(p)}</p></div><button type="button" class="btn ghost sm" data-act="editPrize" data-id="${esc(p.id)}">עריכה</button></div>`;
+  const prizeRow = (p) => `<div class="item${p.active ? '' : ' pending-dot'}"><span style="font-size:26px" aria-hidden="true">${esc(p.emoji)}</span><div class="t"><b>${esc(p.name)}</b><p class="meta">${topEmoji(p.price)} ${esc(amountText(p.price))}${p.active ? '' : ' · מוסתר'}${sending(p)}</p></div><button type="button" class="btn ghost sm" data-act="editPrize" data-id="${esc(p.id)}">עריכה</button></div>`;
   return `
   <header class="top"><div class="hi"><small>החנות של כרמל</small><b>פרסים והזמנות</b></div></header>
   <section class="card"><h2>הזמנות</h2>${orders.length ? `<div class="list">${orders.map(orderRow).join('')}</div>` : '<p class="empty">עוד לא הוזמן כלום.</p>'}</section>
@@ -692,7 +750,7 @@ function settingsView(v) {
   </section>
   <section class="card stack"><h2>הטלפון הזה</h2><button type="button" class="btn ghost" data-act="logout">יציאה</button></section>`;
 }
-const PARENT_VIEWS = { now: nowView, pwords: pwordsView, pshop: pshopView, settings: settingsView };
+const PARENT_VIEWS = { now: nowView, pwords: pwordsView, pshop: pshopView, pearn: earnView, settings: settingsView };
 
 // ============================================================ sheets and toasts
 function openSheet(html, onOpen) {
@@ -736,25 +794,21 @@ function myCodeSheet() {
     <p id="myCodeErr" class="err"></p>
     <button type="button" class="btn block" data-act="saveMyCode">שמירה</button>`);
 }
-function ladderSheet() {
-  const rows = [['20 נקודות', 'כוכב', '⭐'], ['6 כוכבים', 'מגדנה', '🍬'], ['4 מגדנות', "צ'ונגון", '🍡'], ["3 צ'ונגונים", 'צל"ש', '🎖️'], ['10 צל"שים', 'טונטון', '🐋']];
-  openSheet(`<h3>איך זה עובד?</h3>
-    <div class="card list">${rows.map(([a, b, e]) => `<div class="item"><span style="font-size:24px" aria-hidden="true">${e}</span><div class="t"><p>${esc(a)} = <b>${esc(b)}</b></p></div></div>`).join('')}</div>
-    <p class="sub">את הנקודות נותנים אבא ואמא, ואפשר גם לבקש. בחנות קונים בהן פרסים.</p>
-    <button type="button" class="btn ghost block" data-act="closeSheet">סגירה</button>`);
+// quick picks for an amount picker inside a sheet: they fill the picker and light up
+const quickPicks = (list, act) => `<div class="chips">${list.map((n) => `<button type="button" class="chip" data-act="${act}" data-pts="${n}">${topEmoji(n)} ${esc(amountText(n))}</button>`).join('')}</div>`;
+function syncPicks(el) {
+  const n = readAmount(el);
+  $$('.chip[data-pts]', el).forEach((c) => c.classList.toggle('on', int(c.dataset.pts) === n));
 }
 function askSheet() {
   openSheet(`<h3>✋ לבקש נקודות</h3>
     <p class="sub">אבא ואמא יחליטו כמה.</p>
-    <div class="chips">
-      <button type="button" class="chip" data-act="pickAsk" data-pts="5">✨ 5 נקודות</button>
-      <button type="button" class="chip on" data-act="pickAsk" data-pts="20">⭐ כוכב</button>
-      <button type="button" class="chip" data-act="pickAsk" data-pts="120">🍬 מגדנה</button>
-    </div>
-    <label class="f">כמה נקודות<input id="askPts" class="in num" type="number" inputmode="numeric" min="1" value="20"></label>
+    ${quickPicks([5, 20, 120], 'pickAmount')}
+    <div class="stack" style="gap:6px"><span class="f">כמה</span>${pickerHTML(20)}</div>
     <label class="f">על מה?<textarea id="askWhy" class="in" maxlength="200" placeholder="למשל: עבר עוד יום"></textarea></label>
     <button type="button" class="btn block" data-act="sendAsk">לשלוח לאבא ולאמא</button>`, (el) => {
-    $('#askPts', el).addEventListener('input', () => $$('.chip', el).forEach((c) => c.classList.toggle('on', c.dataset.pts === $('#askPts', el).value)));
+    syncPicks(el);
+    el.addEventListener('input', () => syncPicks(el));
   });
 }
 function pickNote(v) {
@@ -790,18 +844,23 @@ function homeSheet(v) {
     ${v.homeAt ? '<button type="button" class="btn ghost block" data-act="clearHome">בלי תאריך</button>' : ''}`);
 }
 function prizeSheet(p) {
-  const units = [[20, '⭐ כוכב'], [120, '🍬 מגדנה'], [480, "🍡 צ'ונגון"], [1440, '🎖️ צל"ש'], [14400, '🐋 טונטון']];
   openSheet(`<h3>${p ? 'עריכת פרס' : 'פרס חדש'}</h3>
     <div class="split" style="grid-template-columns:84px 1fr"><label class="f">סמל<input id="prEmoji" class="in" maxlength="8" value="${esc(p ? p.emoji : '🎁')}" style="text-align:center;font-size:24px"></label>
     <label class="f">הפרס<input id="prName" class="in" maxlength="80" value="${esc(p ? p.name : '')}"></label></div>
-    <label class="f">מחיר בנקודות<input id="prPrice" class="in num" type="number" inputmode="numeric" min="1" value="${p ? p.price : ''}"></label>
-    <p id="prPriceText" class="hint">${p ? '= ' + esc(amountText(p.price)) : ''}</p>
-    <div class="chips">${units.map(([n, l]) => `<button type="button" class="chip" data-act="prUnit" data-pts="${n}">${l}</button>`).join('')}</div>
+    <div class="stack" style="gap:6px"><span class="f">מחיר</span>${pickerHTML(p ? p.price : 0)}</div>
     <label class="row"><input id="prActive" type="checkbox"${!p || p.active ? ' checked' : ''}> מופיע בחנות</label>
     <p id="prErr" class="err"></p>
-    <button type="button" class="btn block" data-act="savePrize" data-id="${p ? esc(p.id) : ''}">שמירה</button>`, (el) => {
-    $('#prPrice', el).addEventListener('input', () => { const n = int($('#prPrice', el).value); $('#prPriceText', el).textContent = n > 0 ? '= ' + amountText(n) : ''; });
-  });
+    <button type="button" class="btn block" data-act="savePrize" data-id="${p ? esc(p.id) : ''}">שמירה</button>`);
+}
+function ruleSheet(x) {
+  openSheet(`<h3>${x ? 'עריכה' : 'עוד דרך לצבור'}</h3>
+    <div class="split" style="grid-template-columns:84px 1fr"><label class="f">סמל<input id="ruEmoji" class="in" maxlength="8" value="${esc(x ? x.emoji : '⭐')}" style="text-align:center;font-size:24px"></label>
+    <label class="f">על מה?<input id="ruText" class="in" maxlength="140" value="${esc(x ? x.text : '')}"></label></div>
+    <div class="stack" style="gap:6px"><span class="f">כמה מקבלים (אפשר להשאיר ריק)</span>${pickerHTML(x ? x.points : 0)}</div>
+    <label class="row"><input id="ruActive" type="checkbox"${!x || x.active ? ' checked' : ''}> כרמל רואה את זה</label>
+    <p id="ruErr" class="err"></p>
+    <button type="button" class="btn block" data-act="saveRule" data-id="${x ? esc(x.id) : ''}">שמירה</button>
+    ${x ? `<button type="button" class="btn ghost block" data-act="delRule" data-id="${esc(x.id)}">מחיקה</button>` : ''}`);
 }
 
 // ============================================================ actions
@@ -838,12 +897,11 @@ const ACTS = {
     } catch (e) { if ($('#myCodeErr')) $('#myCodeErr').textContent = e.message || 'לא נשמר. מנסים שוב.'; }
   },
   logout,
-  ladder: ladderSheet,
   ask: askSheet,
-  pickAsk(b) { $('#askPts').value = b.dataset.pts; $$('#sheet .chip').forEach((c) => c.classList.toggle('on', c === b)); },
+  pickAmount(b) { setAmount($('#sheet'), int(b.dataset.pts)); syncPicks($('#sheet')); },
   sendAsk() {
-    const points = int($('#askPts').value), reason = $('#askWhy').value.trim();
-    if (points < 1) { toast('כמה נקודות?'); return; }
+    const points = readAmount($('#sheet')), reason = $('#askWhy').value.trim();
+    if (points < 1) { toast('כמה?'); return; }
     send('requestPoints', { id: uid(), points, reason });
     closeSheet(); toast('✋ הבקשה נשלחה לאבא ולאמא');
   },
@@ -865,26 +923,27 @@ const ACTS = {
   confirmOrder(b) { send('orderPrize', { id: uid(), prizeId: b.dataset.id }); closeSheet(); toast('🎁 ההזמנה נשלחה!'); },
   cancelOrder(b) { send('cancelOrder', { id: b.dataset.id }); },
   cancelRequest(b) { send('cancelRequest', { id: b.dataset.id }); },
-  pickGive(b) { S.draft.givePts = b.dataset.pts; saveDraft(); render(); },
+  pickGive(b) { const { qty, size } = splitAmount(int(b.dataset.pts)); S.draft.giveQty = String(qty); S.draft.giveUnit = String(size); saveDraft(); render(); },
   give() {
-    const points = int(S.draft.givePts), reason = String(S.draft.giveWhy || '').trim();
-    if (points < 1) { toast('כמה נקודות?'); return; }
+    const points = int(S.draft.giveQty) * (int(S.draft.giveUnit) || 20), reason = String(S.draft.giveWhy || '').trim();
+    if (points < 1) { toast('כמה?'); return; }
     const p = send('givePoints', { id: uid(), points, reason });
-    delete S.draft.givePts; delete S.draft.giveWhy; saveDraft(); render();
+    delete S.draft.giveQty; delete S.draft.giveUnit; delete S.draft.giveWhy; saveDraft(); render();
     toast(`⭐ נתת לכרמל ${amountText(points)}`, { action: 'ביטול', onAction: () => send('deleteGrant', { id: p.id }) });
   },
   delGrant(b) {
     const x = view().ledger.find((y) => y.id === b.dataset.id); if (!x) return;
-    openSheet(`<h3>למחוק את הנקודות האלה?</h3><p>${fmtNum(x.points)} נקודות${x.reason ? `: "${esc(x.reason)}"` : ''}</p>
+    openSheet(`<h3>למחוק את הנקודות האלה?</h3><p>${topEmoji(x.points)} ${esc(amountText(x.points))}${x.reason ? `: "${esc(x.reason)}"` : ''}</p>
       <button type="button" class="btn block" data-act="confirmDelGrant" data-id="${esc(x.id)}">למחוק</button>
       <button type="button" class="btn ghost block" data-act="closeSheet">ביטול</button>`);
   },
   confirmDelGrant(b) { send('deleteGrant', { id: b.dataset.id }); closeSheet(); },
   approveReq(b) {
     const r = view().requests.find((x) => x.id === b.dataset.id); if (!r) return;
-    const points = int(draftVal('ap-' + r.id, r.points)) || r.points;
+    const box = b.closest('.decide');
+    const points = (box && readAmount(box)) || r.points;
     send('decideRequest', { id: r.id, approve: true, points });
-    delete S.draft['ap-' + r.id]; saveDraft();
+    delete S.draft['apq-' + r.id]; delete S.draft['apu-' + r.id]; saveDraft();
     toast(`✓ אושרו ${amountText(points)}`);
   },
   declineReq(b) { send('decideRequest', { id: b.dataset.id, approve: false }); },
@@ -915,14 +974,26 @@ const ACTS = {
   },
   clearHome() { send('setHomeAt', { homeAt: 0 }); closeSheet(); },
   editPrize(b) { prizeSheet(view().prizes.find((x) => x.id === b.dataset.id) || null); },
-  prUnit(b) { $('#prPrice').value = b.dataset.pts; $('#prPrice').dispatchEvent(new Event('input')); },
   savePrize(b) {
-    const name = $('#prName').value.trim(), emoji = $('#prEmoji').value.trim() || '🎁', price = int($('#prPrice').value);
+    const name = $('#prName').value.trim(), emoji = $('#prEmoji').value.trim() || '🎁', price = readAmount($('#sheet'));
     if (!name) { $('#prErr').textContent = 'איך קוראים לפרס?'; return; }
     if (price < 1) { $('#prErr').textContent = 'מה המחיר?'; return; }
     send('savePrize', { id: b.dataset.id || 'p' + uid(), emoji, name, price, active: $('#prActive').checked });
     closeSheet(); toast('🎁 נשמר');
   },
+  editRule(b) { ruleSheet(view().rules.find((x) => x.id === b.dataset.id) || null); },
+  saveRule(b) {
+    const text = $('#ruText').value.trim(), emoji = $('#ruEmoji').value.trim() || '⭐', points = readAmount($('#sheet'));
+    if (!text) { $('#ruErr').textContent = 'על מה מקבלים נקודות?'; return; }
+    send('saveRule', { id: b.dataset.id || 'u' + uid(), emoji, text, points, active: $('#ruActive').checked });
+    closeSheet(); toast('📖 נשמר');
+  },
+  delRule(b) {
+    openSheet(`<h3>למחוק?</h3><p class="sub">זה ייעלם גם אצל כרמל.</p>
+      <button type="button" class="btn block" data-act="confirmDelRule" data-id="${esc(b.dataset.id)}">למחוק</button>
+      <button type="button" class="btn ghost block" data-act="closeSheet">ביטול</button>`);
+  },
+  confirmDelRule(b) { send('deleteRule', { id: b.dataset.id }); closeSheet(); },
   savePhone(b) {
     const role = b.dataset.role, raw = String(draftVal('phone_' + role, '')).trim();
     let d = raw.replace(/\D/g, '');
@@ -954,13 +1025,14 @@ document.addEventListener('click', (e) => {
   if (f) { e.preventDefault(); f(b, e); }
 });
 document.addEventListener('input', (e) => {
+  if (e.target.matches && e.target.matches('[data-amt-qty]')) relabelPicker(e.target.closest('.amount'));
   const f = e.target.dataset && e.target.dataset.field;
   if (!f) return;
   S.draft[f] = e.target.value;
   saveDraft();
-  if (f === 'givePts') {
-    const n = int(e.target.value);
-    $$('#view .chip[data-pts]').forEach((c) => c.classList.toggle('on', int(c.dataset.pts) === n));
+  if (f === 'giveQty' || f === 'giveUnit') {
+    const n = int(S.draft.giveQty) * (int(S.draft.giveUnit) || 20);
+    $$('#view .chip[data-act="pickGive"]').forEach((c) => c.classList.toggle('on', int(c.dataset.pts) === n));
   }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.sheetOpen) closeSheet(); });
